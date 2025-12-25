@@ -1,55 +1,45 @@
-name: Build Component Analyzer
-
+name: Build Flipper App
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Получить код приложения
+      - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: ⚙️ Установить базовые инструменты
+      - name: Setup Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 python3-pip cmake build-essential
-
-      - name: 📦 Скачать прошивку Flipper
+          sudo apt-get install -y git python3 python3-pip cmake build-essential libusb-1.0-0-dev
+      - name: Clone Flipper Firmware
         run: |
           git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1
           cd flipperzero-firmware
           git submodule update --init --recursive --depth=1
-
-      - name: 🛠️ Скопировать файлы приложения в прошивку
+      - name: Create App Files
         run: |
           cd flipperzero-firmware
-          mkdir -p applications_user/component_analyzer
-          cp ../application.fam ../component_analyzer.c applications_user/component_analyzer/
-
-      - name: 🚀 Собрать приложение
+          mkdir -p applications_user/gpio_tester
+          echo 'App(appid="gpio_tester", name="GPIO Tester", apptype=FlipperAppType.EXTERNAL, entry_point=gpio_tester_app, stack_size=2048, icon="A_Plug_14x14")' > applications_user/gpio_tester/application.fam
+          echo '#pragma once' > applications_user/gpio_tester/gpio_tester.h
+          echo 'int32_t gpio_tester_app(void* p);' >> applications_user/gpio_tester/gpio_tester.h
+          echo '#include "gpio_tester.h"' > applications_user/gpio_tester/gpio_tester.c
+          echo '#include <furi.h>' >> applications_user/gpio_tester/gpio_tester.c
+          echo '' >> applications_user/gpio_tester/gpio_tester.c
+          echo 'int32_t gpio_tester_app(void* p) {' >> applications_user/gpio_tester/gpio_tester.c
+          echo '    UNUSED(p);' >> applications_user/gpio_tester/gpio_tester.c
+          echo '    return 0;' >> applications_user/gpio_tester/gpio_tester.c
+          echo '}' >> applications_user/gpio_tester/gpio_tester.c
+      - name: Build Application
         run: |
           cd flipperzero-firmware
           chmod +x fbt
-          ./fbt fap_dist DEBUG=0
-
-      - name: 📤 Найти и загрузить .fap файл
-        run: |
-          cd flipperzero-firmware
-          # Ищем любой созданный .fap файл
-          find . -name "*.fap" -type f
-          FAP_FILE=$(find . -name "*.fap" -type f | head -1)
-          if [ -n "$FAP_FILE" ]; then
-            echo "Найден файл: $FAP_FILE"
-            cp "$FAP_FILE" ../component_analyzer.fap
-          else
-            echo "ОШИБКА: .fap файл не найден!"
-            exit 1
-          fi
-
-      - name: ⬆️ Загрузить артефакт (готовое приложение)
+          ./fbt fap_dist DEBUG=0 APPID=gpio_tester
+      - name: Upload FAP File
         uses: actions/upload-artifact@v4
         with:
-          name: component-analyzer-app
-          path: component_analyzer.fap
+          name: gpio-tester-fap
+          path: flipperzero-firmware/build/f7-firmware-D/.extapps/*.fap
