@@ -1,4 +1,4 @@
-name: Build Simple GPIO Test
+name: Build Working Flipper App
 on: [push]
 
 jobs:
@@ -7,38 +7,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup
+      - name: Setup environment
         run: |
           sudo apt update
           sudo apt install -y git python3 python3-pip cmake
           
-      - name: Clone and build
+      - name: Get firmware
         run: |
-          # Клонируем прошивку
-          git clone https://github.com/flipperdevices/flipperzero-firmware.git fw --depth=1
+          git clone https://github.com/flipperdevices/flipperzero-firmware.git fw
           cd fw
+          # Критически важно: инициализируем подмодули!
+          git submodule update --init --recursive
           
-          # Создаем ПРОСТЕЙШЕЕ работающее приложение
-          mkdir -p applications_user/test_app
+      - name: Create working app
+        run: |
+          cd fw
+          mkdir -p applications_user/my_app
           
-          # application.fam
-          echo 'App(appid="test_app", name="Test App", apptype=FlipperAppType.EXTERNAL, entry_point=test_app, stack_size=1024, icon="A_Plug_14x14")' > applications_user/test_app/application.fam
+          # 1. application.fam - ОДНА строка
+          echo 'App(appid="my_app", name="My Test App", apptype=FlipperAppType.EXTERNAL, entry_point=my_app, stack_size=1024, icon="A_Plug_14x14")' > applications_user/my_app/application.fam
           
-          # Простейший .c файл, который ТОЧНО сработает
-          echo '#include <furi.h>' > applications_user/test_app/test_app.c
-          echo 'int32_t test_app(void* p) {' >> applications_user/test_app/test_app.c
-          echo '    UNUSED(p);' >> applications_user/test_app/test_app.c
-          echo '    return 0;' >> applications_user/test_app/test_app.c
-          echo '}' >> applications_user/test_app/test_app.c
+          # 2. my_app.c - МИНИМАЛЬНЫЙ рабочий код
+          echo '#include <furi.h>' > applications_user/my_app/my_app.c
+          echo 'int32_t my_app(void* p) {' >> applications_user/my_app/my_app.c
+          echo '    UNUSED(p);' >> applications_user/my_app/my_app.c
+          echo '    // Простейшее работающее приложение' >> applications_user/my_app/my_app.c
+          echo '    return 0;' >> applications_user/my_app/my_app.c
+          echo '}' >> applications_user/my_app/my_app.c
           
-          # Собираем
-          ./fbt fap_dist DEBUG=0
+      - name: Build app
+        run: |
+          cd fw
+          # Даем права и собираем
+          chmod +x fbt
+          ./fbt fap_dist
           
-          # Ищем и копируем результат
+      - name: Find and show results
+        run: |
+          cd fw
+          echo "=== Поиск .fap файлов ==="
           find . -name "*.fap" -type f
-          cp $(find . -name "*.fap" -type f | head -1) ../test_app.fap
           
-      - uses: actions/upload-artifact@v4
+          # Показываем структуру build
+          echo "=== Содержимое build/ ==="
+          ls -la build/ || echo "Нет папки build"
+          ls -la build/*/ 2>/dev/null || echo "Нет подпапок"
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: test-app
-          path: test_app.fap
+          name: flipper-app
+          path: fw/build/f7-firmware-D/.extapps/*.fap
