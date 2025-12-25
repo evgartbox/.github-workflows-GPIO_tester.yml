@@ -6,5 +6,5 @@ App(
     cdefines=["APP_COMPONENT_ANALYZER"],
     requires=["gui", "input", "notification"],
     stack_size=3K,
-    icon="I_Crypto_128x64"
+    icon="A_Plug_14x14"
 )
