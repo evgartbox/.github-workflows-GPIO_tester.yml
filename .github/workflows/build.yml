@@ -75,3 +75,4 @@ jobs:
         with:
           name: component-analyzer-app
           path: component_analyzer.fap
+          
