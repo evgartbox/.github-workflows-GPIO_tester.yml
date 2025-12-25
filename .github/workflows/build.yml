@@ -43,3 +43,8 @@ jobs:
         with:
           name: gpio-tester-fap
           path: flipperzero-firmware/build/f7-firmware-D/.extapps/*.fap
+      - name: 🎯 Просто собрать и посмотреть
+        run: |
+          cd flipperzero-firmware
+          echo "=== Что вообще собралось? ==="
+          ./fbt -v fap_dist 2>&1 | grep -A5 -B5 "fap\|FAP\|build" | tail -50
