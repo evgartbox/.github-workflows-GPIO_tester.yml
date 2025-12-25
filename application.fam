@@ -3,8 +3,6 @@ App(
     name="Component Analyzer",
     apptype=FlipperAppType.EXTERNAL,
     entry_point=component_analyzer_app,
-    cdefines=["APP_COMPONENT_ANALYZER"],
-    requires=["gui", "input", "notification"],
-    stack_size=3K,
-    icon="A_Plug_14x14"
+    stack_size=4096,
+    icon="I_ButtonUp_7x4"
 )
