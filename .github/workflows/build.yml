@@ -1,4 +1,4 @@
-name: Build Working Flipper App
+name: Build Flipper App
 on: [push]
 
 jobs:
@@ -10,51 +10,165 @@ jobs:
       - name: Setup environment
         run: |
           sudo apt update
-          sudo apt install -y git python3 python3-pip cmake
+          sudo apt install -y git python3 python3-pip cmake libusb-1.0-0-dev
           
-      - name: Get firmware
+      - name: Clone firmware with ALL submodules
         run: |
-          git clone https://github.com/flipperdevices/flipperzero-firmware.git fw
-          cd fw
-          # Критически важно: инициализируем подмодули!
-          git submodule update --init --recursive
+          git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1
+          cd flipperzero-firmware
+          # КРИТИЧЕСКИ ВАЖНО: полная инициализация подмодулей
+          git submodule update --init --recursive --depth=1
           
-      - name: Create working app
+      - name: Install Python dependencies
         run: |
-          cd fw
-          mkdir -p applications_user/my_app
+          cd flipperzero-firmware
+          pip3 install -r scripts/requirements.txt
           
-          # 1. application.fam - ОДНА строка
-          echo 'App(appid="my_app", name="My Test App", apptype=FlipperAppType.EXTERNAL, entry_point=my_app, stack_size=1024, icon="A_Plug_14x14")' > applications_user/my_app/application.fam
-          
-          # 2. my_app.c - МИНИМАЛЬНЫЙ рабочий код
-          echo '#include <furi.h>' > applications_user/my_app/my_app.c
-          echo 'int32_t my_app(void* p) {' >> applications_user/my_app/my_app.c
-          echo '    UNUSED(p);' >> applications_user/my_app/my_app.c
-          echo '    // Простейшее работающее приложение' >> applications_user/my_app/my_app.c
-          echo '    return 0;' >> applications_user/my_app/my_app.c
-          echo '}' >> applications_user/my_app/my_app.c
-          
-      - name: Build app
+      - name: Create app with PROPER structure
         run: |
-          cd fw
-          # Даем права и собираем
+          cd flipperzero-firmware
+          
+          # 1. Создаем папку приложения
+          APP_DIR="applications_user/gpio_test"
+          mkdir -p $APP_DIR
+          
+          # 2. application.fam (манифест)
+          cat > $APP_DIR/application.fam << 'EOF'
+App(
+    appid="gpio_test",
+    name="GPIO Test",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point=gpio_test_app,
+    stack_size=2048,
+    icon="A_Plug_14x14"
+)
+EOF
+          
+          # 3. Заголовочный файл .h
+          cat > $APP_DIR/gpio_test.h << 'EOF'
+#pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
+int32_t gpio_test_app(void* p);
+#ifdef __cplusplus
+}
+#endif
+EOF
+          
+          # 4. Основной файл .c (минимальный, но полный)
+          cat > $APP_DIR/gpio_test.c << 'EOF'
+#include "gpio_test.h"
+#include <furi.h>
+#include <gui/gui.h>
+#include <input/input.h>
+
+static void draw_callback(Canvas* canvas, void* ctx) {
+    UNUSED(ctx);
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 10, 10, "GPIO Test OK!");
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 10, 30, "Press Back to exit");
+}
+
+static void input_callback(InputEvent* input_event, void* ctx) {
+    furi_assert(ctx);
+    FuriMessageQueue* event_queue = ctx;
+    furi_message_queue_put(event_queue, input_event, FuriWaitForever);
+}
+
+int32_t gpio_test_app(void* p) {
+    UNUSED(p);
+    
+    FuriMessageQueue* event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    
+    ViewPort* view_port = view_port_alloc();
+    view_port_draw_callback_set(view_port, draw_callback, NULL);
+    view_port_input_callback_set(view_port, input_callback, event_queue);
+    
+    Gui* gui = furi_record_open(RECORD_GUI);
+    gui_add_view_port(gui, view_port, GuiLayerFullscreen);
+    
+    InputEvent event;
+    bool running = true;
+    
+    while(running) {
+        if(furi_message_queue_get(event_queue, &event, FuriWaitForever) == FuriStatusOk) {
+            if(event.type == InputTypePress && event.key == InputKeyBack) {
+                running = false;
+            }
+        }
+        view_port_update(view_port);
+    }
+    
+    gui_remove_view_port(gui, view_port);
+    view_port_free(view_port);
+    furi_message_queue_free(event_queue);
+    furi_record_close(RECORD_GUI);
+    
+    return 0;
+}
+EOF
+          
+          echo "Файлы приложения созданы:"
+          ls -la $APP_DIR/
+          echo "Содержимое .c файла:"
+          head -20 $APP_DIR/gpio_test.c
+          
+      - name: Build the application
+        run: |
+          cd flipperzero-firmware
           chmod +x fbt
-          ./fbt fap_dist
+          echo "=== Запуск сборки ==="
+          ./fbt fap_dist DEBUG=0
           
-      - name: Find and show results
+      - name: Find and prepare FAP file
         run: |
-          cd fw
-          echo "=== Поиск .fap файлов ==="
-          find . -name "*.fap" -type f
+          cd flipperzero-firmware
+          echo "=== Ищем FAP файлы ==="
           
-          # Показываем структуру build
-          echo "=== Содержимое build/ ==="
-          ls -la build/ || echo "Нет папки build"
-          ls -la build/*/ 2>/dev/null || echo "Нет подпапок"
+          # Ищем ВЕЗДЕ
+          find . -type f -name "*.fap" 2>/dev/null
           
-      - name: Upload artifact
+          # Пробуем несколько возможных путей
+          POSSIBLE_PATHS=(
+            "./build/f7-firmware-D/.extapps/gpio_test.fap"
+            "./build/latest/f7-firmware-D/.extapps/gpio_test.fap" 
+            "./build/f7-firmware-D/.extapps/*.fap"
+            "./build/latest/f7-firmware-D/.extapps/*.fap"
+            "./build/*/.extapps/*.fap"
+          )
+          
+          FAP_FOUND=""
+          for path in "${POSSIBLE_PATHS[@]}"; do
+            if ls $path 1>/dev/null 2>&1; then
+              FAP_FOUND=$(ls $path | head -1)
+              echo "Найден файл: $FAP_FOUND"
+              break
+            fi
+          done
+          
+          if [ -n "$FAP_FOUND" ]; then
+            cp "$FAP_FOUND" ../gpio_test.fap
+            echo "Файл скопирован: gpio_test.fap"
+            ls -lh ../gpio_test.fap
+          else
+            echo "ERROR: FAP файл не найден!"
+            echo "Содержимое папки build:"
+            find ./build -type f 2>/dev/null | head -30
+            exit 1
+          fi
+          
+      - name: Upload FAP file
         uses: actions/upload-artifact@v4
         with:
-          name: flipper-app
-          path: fw/build/f7-firmware-D/.extapps/*.fap
+          name: gpio-test-app
+          path: gpio_test.fap
+          
+      - name: Show success message
+        if: success()
+        run: |
+          echo "✅ Сборка успешна!"
+          echo "Скачайте gpio_test.fap из раздела Artifacts"
+          echo "Скопируйте на SD карту Flipper в /apps/Tools/"
