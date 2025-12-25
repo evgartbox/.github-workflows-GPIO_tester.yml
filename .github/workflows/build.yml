@@ -1,119 +1,44 @@
-name: Build Flipper GPIO Tester
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+name: Build Simple GPIO Test
+on: [push]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: ⚙️ Setup Dependencies
+      - uses: actions/checkout@v4
+      
+      - name: Setup
         run: |
-          sudo apt-get update
-          sudo apt-get install -y git python3 python3-pip cmake build-essential libusb-1.0-0-dev
-
-      - name: 📦 Clone Flipper Firmware
-        run: |
-          git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1
-          cd flipperzero-firmware
-          git submodule update --init --recursive --depth=1
-
-      - name: 🔍 Check Python Dependencies
-        run: |
-          cd flipperzero-firmware
-          pip3 install -r scripts/requirements.txt || echo "Warning: Could not install Python deps"
-
-      - name: 🛠️ Create GPIO Tester App
-        run: |
-          cd flipperzero-firmware
-          mkdir -p applications_user/gpio_tester
+          sudo apt update
+          sudo apt install -y git python3 python3-pip cmake
           
-          # application.fam - ВСЁ в одной строке
-          echo 'App(appid="gpio_tester", name="GPIO Tester", apptype=FlipperAppType.EXTERNAL, entry_point=gpio_tester_app, stack_size=4096, icon="A_Plug_14x14")' > applications_user/gpio_tester/application.fam
-          
-          # gpio_tester.c - простой код без сложных конструкций
-          echo '#include <furi.h>' > applications_user/gpio_tester/gpio_tester.c
-          echo '#include <gui/gui.h>' >> applications_user/gpio_tester/gpio_tester.c
-          echo '#include <input/input.h>' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo 'typedef struct {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    Gui* gui;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    ViewPort* view_port;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    FuriMessageQueue* event_queue;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '} GpioTesterApp;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo 'static void draw_callback(Canvas* canvas, void* ctx) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    UNUSED(ctx);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    canvas_clear(canvas);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    canvas_set_font(canvas, FontPrimary);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    canvas_draw_str(canvas, 10, 10, "GPIO Tester v1.0");' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    canvas_set_font(canvas, FontSecondary);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    canvas_draw_str(canvas, 10, 30, "OK: Test pins");' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    canvas_draw_str(canvas, 10, 45, "Back: Exit");' >> applications_user/gpio_tester/gpio_tester.c
-          echo '}' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo 'static void input_callback(InputEvent* input_event, void* ctx) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    GpioTesterApp* app = ctx;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    furi_message_queue_put(app->event_queue, input_event, FuriWaitForever);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '}' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo 'int32_t gpio_tester_app(void* p) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    UNUSED(p);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    GpioTesterApp* app = malloc(sizeof(GpioTesterApp));' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    app->gui = furi_record_open(RECORD_GUI);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    app->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    app->view_port = view_port_alloc();' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    view_port_draw_callback_set(app->view_port, draw_callback, NULL);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    view_port_input_callback_set(app->view_port, input_callback, app);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    InputEvent event;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    bool running = true;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    while(running) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '        if(furi_message_queue_get(app->event_queue, &event, 100) == FuriStatusOk) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '            if(event.type == InputTypePress && event.key == InputKeyBack) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '                running = false;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '            }' >> applications_user/gpio_tester/gpio_tester.c
-          echo '        }' >> applications_user/gpio_tester/gpio_tester.c
-          echo '        view_port_update(app->view_port);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    }' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    gui_remove_view_port(app->gui, app->view_port);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    view_port_free(app->view_port);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    furi_message_queue_free(app->event_queue);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    furi_record_close(RECORD_GUI);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    free(app);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    return 0;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '}' >> applications_user/gpio_tester/gpio_tester.c
-
-      - name: 🚀 Build Application
+      - name: Clone and build
         run: |
-          cd flipperzero-firmware
-          chmod +x fbt
+          # Клонируем прошивку
+          git clone https://github.com/flipperdevices/flipperzero-firmware.git fw --depth=1
+          cd fw
+          
+          # Создаем ПРОСТЕЙШЕЕ работающее приложение
+          mkdir -p applications_user/test_app
+          
+          # application.fam
+          echo 'App(appid="test_app", name="Test App", apptype=FlipperAppType.EXTERNAL, entry_point=test_app, stack_size=1024, icon="A_Plug_14x14")' > applications_user/test_app/application.fam
+          
+          # Простейший .c файл, который ТОЧНО сработает
+          echo '#include <furi.h>' > applications_user/test_app/test_app.c
+          echo 'int32_t test_app(void* p) {' >> applications_user/test_app/test_app.c
+          echo '    UNUSED(p);' >> applications_user/test_app/test_app.c
+          echo '    return 0;' >> applications_user/test_app/test_app.c
+          echo '}' >> applications_user/test_app/test_app.c
+          
+          # Собираем
           ./fbt fap_dist DEBUG=0
-
-      - name: 🔍 Find FAP File
-        run: |
-          cd flipperzero-firmware
-          echo "=== Searching for FAP files ==="
-          find . -name "*.fap" -type f
           
-          FAP_PATH=$(find . -name "*.fap" -type f | head -1)
-          if [ -n "$FAP_PATH" ]; then
-            echo "Found FAP file: $FAP_PATH"
-            cp "$FAP_PATH" ../gpio_tester.fap
-          else
-            echo "ERROR: No FAP files found!"
-            exit 1
-          fi
-
-      - name: 📤 Upload FAP File
-        uses: actions/upload-artifact@v4
+          # Ищем и копируем результат
+          find . -name "*.fap" -type f
+          cp $(find . -name "*.fap" -type f | head -1) ../test_app.fap
+          
+      - uses: actions/upload-artifact@v4
         with:
-          name: gpio-tester-app
-          path: gpio_tester.fap
+          name: test-app
+          path: test_app.fap
