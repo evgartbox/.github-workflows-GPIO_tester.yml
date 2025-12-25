@@ -1,0 +1,49 @@
+name: Build Flipper App
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Ручной запуск
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Setup Flipper SDK
+      uses: flipperdevices/flipperzero-firmware-action@v1
+      
+    - name: Create app directory
+      run: |
+        mkdir -p applications_user/component_analyzer
+        cp *.c *.h application.fam applications_user/component_analyzer/
+        
+    - name: Build the app
+      run: ./fbt fap_component_analyzer
+      
+    - name: Upload FAP artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: component-analyzer
+        path: build/f7-firmware-D/.extapps/*.fap
+        retention-days: 7
+        
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/f7-firmware-D/.extapps/*.fap
+        tag_name: v1.0.${{ github.run_number }}
+        name: Release v1.0.${{ github.run_number }}
+        body: |
+          Automatic build of Component Analyzer
+          
+          Download the .fap file and copy to your Flipper's SD card:
+          `/ext/apps/Tools/component_analyzer.fap`
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
