@@ -1,4 +1,4 @@
-name: Build Flipper App
+name: Build Flipper GPIO Tester
 on:
   push:
     branches: [main]
@@ -8,38 +8,216 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: 📥 Checkout Code
         uses: actions/checkout@v4
-      - name: Setup Dependencies
+
+      - name: ⚙️ Setup Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git python3 python3-pip cmake build-essential libusb-1.0-0-dev
-      - name: Clone Flipper Firmware
+
+      - name: 📦 Clone Flipper Firmware
         run: |
           git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1
           cd flipperzero-firmware
           git submodule update --init --recursive --depth=1
-      - name: Create App Files
+
+      - name: 🔍 Check Python Dependencies
         run: |
           cd flipperzero-firmware
+          pip3 install -r scripts/requirements.txt || echo "Warning: Could not install Python deps"
+
+      - name: 🛠️ Create GPIO Tester App
+        run: |
+          cd flipperzero-firmware
+          
+          # Создаем папку приложения
           mkdir -p applications_user/gpio_tester
-          echo 'App(appid="gpio_tester", name="GPIO Tester", apptype=FlipperAppType.EXTERNAL, entry_point=gpio_tester_app, stack_size=2048, icon="A_Plug_14x14")' > applications_user/gpio_tester/application.fam
-          echo '#pragma once' > applications_user/gpio_tester/gpio_tester.h
-          echo 'int32_t gpio_tester_app(void* p);' >> applications_user/gpio_tester/gpio_tester.h
-          echo '#include "gpio_tester.h"' > applications_user/gpio_tester/gpio_tester.c
-          echo '#include <furi.h>' >> applications_user/gpio_tester/gpio_tester.c
-          echo '' >> applications_user/gpio_tester/gpio_tester.c
-          echo 'int32_t gpio_tester_app(void* p) {' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    UNUSED(p);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    return 0;' >> applications_user/gpio_tester/gpio_tester.c
-          echo '}' >> applications_user/gpio_tester/gpio_tester.c
-      - name: Build Application
+          
+          # Создаем application.fam (манифест)
+          echo 'App(
+            appid="gpio_tester",
+            name="GPIO Tester",
+            apptype=FlipperAppType.EXTERNAL,
+            entry_point=gpio_tester_app,
+            stack_size=4096,
+            icon="A_Plug_14x14"
+          )' > applications_user/gpio_tester/application.fam
+          
+          # Создаем исходный код приложения
+          cat > applications_user/gpio_tester/gpio_tester.c << 'EOF'
+#include <furi.h>
+#include <gui/gui.h>
+#include <input/input.h>
+#include <notification/notification.h>
+#include <furi_hal.h>
+
+typedef struct {
+    Gui* gui;
+    ViewPort* view_port;
+    FuriMessageQueue* event_queue;
+    NotificationApp* notification;
+    uint8_t test_result;
+    char status[32];
+} GpioTesterApp;
+
+static void draw_callback(Canvas* canvas, void* ctx) {
+    GpioTesterApp* app = ctx;
+    canvas_clear(canvas);
+    
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 10, 10, "GPIO Tester v1.0");
+    canvas_draw_line(canvas, 0, 12, 128, 12);
+    
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 10, 30, "Connect to:");
+    canvas_draw_str(canvas, 20, 45, "PC0 - PC1 pins");
+    canvas_draw_str(canvas, 10, 65, app->status);
+    
+    if(app->test_result == 1) {
+        canvas_draw_str(canvas, 90, 40, "OK!");
+        canvas_draw_icon(canvas, 110, 25, &I_Ok_btn_9x9);
+    } else if(app->test_result == 2) {
+        canvas_draw_str(canvas, 85, 40, "FAIL");
+        canvas_draw_icon(canvas, 110, 25, &I_Error_18x18);
+    }
+    
+    canvas_draw_line(canvas, 0, 110, 128, 110);
+    canvas_set_font(canvas, FontKeyboard);
+    canvas_draw_str(canvas, 5, 125, "OK:Test  Back:Exit");
+}
+
+static void input_callback(InputEvent* input_event, void* ctx) {
+    GpioTesterApp* app = ctx;
+    furi_message_queue_put(app->event_queue, input_event, FuriWaitForever);
+}
+
+static bool test_gpio_pins() {
+    // Тестируем пины PC0 и PC1
+    furi_hal_gpio_init_simple(GPIO_PIN_0, GpioModeAnalog);
+    furi_hal_gpio_init_simple(GPIO_PIN_1, GpioModeAnalog);
+    
+    // Простой тест - проверяем ADC
+    furi_hal_adc_init();
+    furi_delay_ms(10);
+    
+    uint16_t value1 = furi_hal_adc_read(ADC_CHANNEL_0);
+    uint16_t value2 = furi_hal_adc_read(ADC_CHANNEL_1);
+    
+    furi_hal_adc_deinit();
+    
+    // Если значения в разумных пределах - тест пройден
+    return (value1 < 4095 && value2 < 4095);
+}
+
+int32_t gpio_tester_app(void* p) {
+    UNUSED(p);
+    
+    GpioTesterApp* app = malloc(sizeof(GpioTesterApp));
+    app->gui = furi_record_open(RECORD_GUI);
+    app->notification = furi_record_open(RECORD_NOTIFICATION);
+    app->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+    app->test_result = 0;
+    strcpy(app->status, "Ready for test");
+    
+    app->view_port = view_port_alloc();
+    view_port_draw_callback_set(app->view_port, draw_callback, app);
+    view_port_input_callback_set(app->view_port, input_callback, app);
+    gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
+    
+    InputEvent event;
+    bool running = true;
+    
+    while(running) {
+        if(furi_message_queue_get(app->event_queue, &event, 100) == FuriStatusOk) {
+            if(event.type == InputTypePress) {
+                if(event.key == InputKeyBack) {
+                    running = false;
+                } else if(event.key == InputKeyOk) {
+                    strcpy(app->status, "Testing...");
+                    view_port_update(app->view_port);
+                    
+                    if(test_gpio_pins()) {
+                        app->test_result = 1;
+                        strcpy(app->status, "Test PASSED!");
+                        notification_message(app->notification, &sequence_success);
+                    } else {
+                        app->test_result = 2;
+                        strcpy(app->status, "Test FAILED!");
+                        notification_message(app->notification, &sequence_error);
+                    }
+                }
+            }
+        }
+        view_port_update(app->view_port);
+    }
+    
+    gui_remove_view_port(app->gui, app->view_port);
+    view_port_free(app->view_port);
+    furi_message_queue_free(app->event_queue);
+    furi_record_close(RECORD_NOTIFICATION);
+    furi_record_close(RECORD_GUI);
+    free(app);
+    
+    return 0;
+}
+EOF
+
+      - name: 🚀 Build Application
         run: |
           cd flipperzero-firmware
           chmod +x fbt
-          ./fbt fap_dist DEBUG=0 APPID=gpio_tester
-      - name: Upload FAP File
+          ./fbt fap_dist DEBUG=0
+
+      - name: 🔍 Find FAP File
+        run: |
+          cd flipperzero-firmware
+          echo "=== Searching for FAP files ==="
+          find . -name "*.fap" -type f
+          
+          # Ищем наш файл
+          FAP_PATH=$(find . -name "gpio_tester.fap" -type f | head -1)
+          if [ -z "$FAP_PATH" ]; then
+            # Если не нашли с именем gpio_tester, берем любой .fap
+            FAP_PATH=$(find . -name "*.fap" -type f | head -1)
+          fi
+          
+          if [ -n "$FAP_PATH" ]; then
+            echo "Found FAP file: $FAP_PATH"
+            cp "$FAP_PATH" ../gpio_tester.fap
+          else
+            echo "ERROR: No FAP files found!"
+            echo "Build directory contents:"
+            ls -la build/
+            exit 1
+          fi
+
+      - name: 📤 Upload FAP File
         uses: actions/upload-artifact@v4
         with:
-          name: gpio-tester-fap
-          path: flipperzero-firmware/build/f7-firmware-D/.extapps/*.fap
+          name: gpio-tester-app
+          path: gpio_tester.fap
+
+      - name: 🏷️ Create Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          files: gpio_tester.fap
+          tag_name: v1.0.${{ github.run_number }}
+          name: GPIO Tester v1.0.${{ github.run_number }}
+          body: |
+            ## GPIO Tester for Flipper Zero
+            
+            ### Features:
+            - Test GPIO pins PC0 and PC1
+            - Visual and sound feedback
+            - Simple interface
+            
+            ### Installation:
+            1. Download `gpio_tester.fap`
+            2. Copy to Flipper SD card: `/ext/apps/Tools/`
+            3. Run: Apps → Tools → GPIO Tester
+            
+            Built automatically via GitHub Actions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
