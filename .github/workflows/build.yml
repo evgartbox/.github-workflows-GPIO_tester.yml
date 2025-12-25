@@ -22,27 +22,30 @@ jobs:
           cd flipperzero-firmware
           git submodule update --init --recursive --depth=1
 
-            - name: 🛠️ Create Test App (FIXED)
+      # ОБРАТИТЕ ВНИМАНИЕ: у этого шага УНИКАЛЬНОЕ имя "Create App Structure"
+      - name: 🛠️ Create App Structure
         run: |
           cd flipperzero-firmware
           mkdir -p applications_user/gpio_tester
-
-          # application.fam с ПРАВИЛЬНЫМ именем функции
           echo 'App(appid="gpio_tester", name="GPIO Tester", apptype=FlipperAppType.EXTERNAL, entry_point=gpio_tester_app, stack_size=2048, icon="A_Plug_14x14")' > applications_user/gpio_tester/application.fam
 
-          # gpio_tester.c с ТОЧНО ТАКИМ ЖЕ именем функции
+      # А у этого шага имя "Create App Source Code"
+      - name: 📝 Create App Source Code
+        run: |
+          cd flipperzero-firmware
           echo '#include <furi.h>' > applications_user/gpio_tester/gpio_tester.c
           echo '#include <gui/gui.h>' >> applications_user/gpio_tester/gpio_tester.c
           echo '#include <input/input.h>' >> applications_user/gpio_tester/gpio_tester.c
           echo '' >> applications_user/gpio_tester/gpio_tester.c
           echo 'int32_t gpio_tester_app(void* p) {' >> applications_user/gpio_tester/gpio_tester.c
           echo '    UNUSED(p);' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    // Простейшее работающее приложение' >> applications_user/gpio_tester/gpio_tester.c
-          echo '    return 0;' >> applications_user/gpio_tester/gpio_tester.c
+          echo '    return 0; // Simple working app' >> applications_user/gpio_tester/gpio_tester.c
           echo '}' >> applications_user/gpio_tester/gpio_tester.c
+
       - name: 🚀 Build Application
         run: |
           cd flipperzero-firmware
+          chmod +x fbt
           ./fbt fap_gpio_tester
 
       - name: 📤 Upload FAP File
