@@ -1,77 +1,55 @@
-name: Build Flipper App
-on: [push]
+name: Build Component Analyzer
+
+on:
+  push:
+    branches: [main]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup environment
+      - name: 📥 Получить код приложения
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Установить базовые инструменты
         run: |
-          sudo apt update
-          sudo apt install -y git python3 python3-pip cmake libusb-1.0-0-dev
-          
-      - name: Clone firmware COMPLETE
+          sudo apt-get update
+          sudo apt-get install -y git python3 python3-pip cmake build-essential
+
+      - name: 📦 Скачать прошивку Flipper
         run: |
-          echo "Клонируем прошивку..."
-          git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1 --branch dev
+          git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1
           cd flipperzero-firmware
-          echo "Инициализируем подмодули..."
           git submodule update --init --recursive --depth=1
-          echo "Проверяем структуру..."
-          ls -la scripts/ 2>/dev/null || echo "Папка scripts не найдена"
-          
-      - name: Create minimal app
+
+      - name: 🛠️ Скопировать файлы приложения в прошивку
         run: |
           cd flipperzero-firmware
-          mkdir -p applications_user/test_app
-          
-          # Простейший application.fam
-          echo 'App(appid="test_app", name="Test App", apptype=FlipperAppType.EXTERNAL, entry_point=test_app, stack_size=1024)' > applications_user/test_app/application.fam
-          
-          # Простейший .c файл
-          echo '#include <furi.h>' > applications_user/test_app/test_app.c
-          echo 'int32_t test_app(void* p) {' >> applications_user/test_app/test_app.c
-          echo '    UNUSED(p);' >> applications_user/test_app/test_app.c
-          echo '    return 0;' >> applications_user/test_app/test_app.c
-          echo '}' >> applications_user/test_app/test_app.c
-          
-      - name: Build without Python deps
+          mkdir -p applications_user/component_analyzer
+          cp ../application.fam ../component_analyzer.c applications_user/component_analyzer/
+
+      - name: 🚀 Собрать приложение
         run: |
           cd flipperzero-firmware
-          echo "Проверяем fbt..."
-          if [ -f "fbt" ]; then
-            chmod +x fbt
-            echo "Запускаем сборку..."
-            # Пробуем собрать без зависимостей
-            ./fbt fap_dist DEBUG=0 2>&1 | tail -50
+          chmod +x fbt
+          ./fbt fap_dist DEBUG=0
+
+      - name: 📤 Найти и загрузить .fap файл
+        run: |
+          cd flipperzero-firmware
+          # Ищем любой созданный .fap файл
+          find . -name "*.fap" -type f
+          FAP_FILE=$(find . -name "*.fap" -type f | head -1)
+          if [ -n "$FAP_FILE" ]; then
+            echo "Найден файл: $FAP_FILE"
+            cp "$FAP_FILE" ../component_analyzer.fap
           else
-            echo "ОШИБКА: fbt не найден!"
-            ls -la
+            echo "ОШИБКА: .fap файл не найден!"
             exit 1
           fi
-          
-      - name: Find and upload result
-        run: |
-          echo "Ищем .fap файлы..."
-          find flipperzero-firmware -name "*.fap" -type f 2>/dev/null
-          
-          # Копируем любой найденный .fap
-          FAP_FILE=$(find flipperzero-firmware -name "*.fap" -type f 2>/dev/null | head -1)
-          if [ -n "$FAP_FILE" ]; then
-            echo "Найден: $FAP_FILE"
-            cp "$FAP_FILE" ./test_app.fap
-            echo "Размер файла:"
-            ls -lh ./test_app.fap
-          else
-            echo "FAP не найден, показываем структуру..."
-            find flipperzero-firmware/build -type f 2>/dev/null | head -30
-            # Создаем заглушку для теста
-            echo "Fake FAP for debugging" > ./test_app.fap
-          fi
-          
-      - uses: actions/upload-artifact@v4
+
+      - name: ⬆️ Загрузить артефакт (готовое приложение)
+        uses: actions/upload-artifact@v4
         with:
-          name: flipper-app
-          path: test_app.fap
+          name: component-analyzer-app
+          path: component_analyzer.fap
