@@ -1,49 +1,112 @@
 name: Build Flipper App
-
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Ручной запуск
+    branches: [main]
+  workflow_dispatch: # Позволяет запустить сборку вручную во вкладке "Actions"
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      
-    - name: Setup Flipper SDK
-      uses: flipperdevices/flipperzero-firmware-action@v1
-      
-    - name: Create app directory
-      run: |
-        mkdir -p applications_user/component_analyzer
-        cp *.c *.h application.fam applications_user/component_analyzer/
-        
-    - name: Build the app
-      run: ./fbt fap_component_analyzer
-      
-    - name: Upload FAP artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: component-analyzer
-        path: build/f7-firmware-D/.extapps/*.fap
-        retention-days: 7
-        
-    - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: build/f7-firmware-D/.extapps/*.fap
-        tag_name: v1.0.${{ github.run_number }}
-        name: Release v1.0.${{ github.run_number }}
-        body: |
-          Automatic build of Component Analyzer
-          
-          Download the .fap file and copy to your Flipper's SD card:
-          `/ext/apps/Tools/component_analyzer.fap`
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Шаг 1: Загружаем код из нашего репозитория
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      # Шаг 2: Устанавливаем всё необходимое для сборки
+      - name: ⚙️ Setup Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3 python3-pip cmake build-essential libusb-1.0-0-dev
+
+      # Шаг 3: Скачиваем прошивку Flipper с GitHub
+      - name: 📦 Clone Flipper Firmware
+        run: |
+          git clone https://github.com/flipperdevices/flipperzero-firmware.git --depth=1
+          cd flipperzero-firmware
+          git submodule update --init --recursive --depth=1
+
+      # Шаг 4: Создаём папку и файлы нашего тестового приложения
+      - name: 🛠️ Create Test App
+        run: |
+          cd flipperzero-firmware
+          mkdir -p applications_user/gpio_tester
+
+          # Создаём файл-манифест приложения (application.fam)
+          echo 'App(
+            appid="gpio_tester",
+            name="GPIO Tester",
+            apptype=FlipperAppType.EXTERNAL,
+            entry_point=gpio_tester_app,
+            stack_size=2048,
+            icon="A_Plug_14x14"
+          )' > applications_user/gpio_tester/application.fam
+
+          # Создаём простейший исходный код на C (component_analyzer.c)
+          echo '#include <furi.h>
+#include <gui/gui.h>
+#include <input/input.h>
+
+typedef struct {
+    Gui* gui;
+    ViewPort* view_port;
+    FuriMessageQueue* event_queue;
+} GpioTesterApp;
+
+static void draw_callback(Canvas* canvas, void* ctx) {
+    UNUSED(ctx);
+    canvas_clear(canvas);
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 10, 10, "GPIO Tester v1.0");
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 10, 30, "Connect to PC0/PC1");
+    canvas_draw_str(canvas, 10, 50, "Press OK - Start Test");
+    canvas_draw_str(canvas, 10, 70, "Back - Exit");
+}
+
+static void input_callback(InputEvent* input_event, void* ctx) {
+    GpioTesterApp* app = ctx;
+    furi_message_queue_put(app->event_queue, input_event, FuriWaitForever);
+}
+
+int32_t gpio_tester_app(void* p) {
+    UNUSED(p);
+    GpioTesterApp* app = malloc(sizeof(GpioTesterApp));
+    app->gui = furi_record_open(RECORD_GUI);
+    app->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
+
+    app->view_port = view_port_alloc();
+    view_port_draw_callback_set(app->view_port, draw_callback, NULL);
+    view_port_input_callback_set(app->view_port, input_callback, app);
+    gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
+
+    InputEvent event;
+    bool running = true;
+    while(running) {
+        if(furi_message_queue_get(app->event_queue, &event, 100) == FuriStatusOk) {
+            if(event.type == InputTypePress && event.key == InputKeyBack) {
+                running = false;
+            }
+        }
+        view_port_update(app->view_port);
+    }
+
+    gui_remove_view_port(app->gui, app->view_port);
+    view_port_free(app->view_port);
+    furi_message_queue_free(app->event_queue);
+    furi_record_close(RECORD_GUI);
+    free(app);
+    return 0;
+}' > applications_user/gpio_tester/gpio_tester.c
+
+      # Шаг 5: Запускаем сборку приложения
+      - name: 🚀 Build Application
+        run: |
+          cd flipperzero-firmware
+          ./fbt fap_gpio_tester
+
+      # Шаг 6: Выгружаем готовый .fap файл как артефакт сборки
+      - name: 📤 Upload FAP File
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpio-tester-fap
+          path: flipperzero-firmware/build/f7-firmware-D/.extapps/*.fap
